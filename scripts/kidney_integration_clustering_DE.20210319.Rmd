@@ -1,0 +1,591 @@
+---
+author: "Eleanor Fewings"
+output: html_document
+---
+
+# start_section  
+
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(magrittr)
+library(Seurat)
+library(cowplot)
+library(knitr)
+library(DoMultiBarHeatmap)
+library(scDblFinder)
+
+#Set working dir
+setwd("C:/Users/ellie/Onedrive/Saez/Maurice_calc")
+
+# Source functions
+source("C:/Users/ellie/Onedrive/Saez/Maurice_calc/scripts/source.R")
+
+```
+
+MH6 - human kidney artery control 
+MH7 - human kidney artery calcified 
+MH11- human artery femoralis calcified
+MH12- human artery femoralis control
+MH13- human aorta calcified
+MH14- human aorta control
+MH15- human artery epigastrica calcified
+MH16- human artery epigastrica control
+
+#Read objects in
+```{r read}
+# Load
+load("MH6/pipeline_output/s02_cluster_identity.Rdata")
+#Rename
+mh6 <- data
+# Add sample label
+mh6$sample <- "mh6"
+# Add calc/control label
+mh6$cc <- "control"
+# Add location label
+mh6$loc <- "kidney"
+#Add cell type label to meta
+mh6$celltype <- Idents(mh6)
+
+#Doublet finding
+doublets <- scDblFinder(sce = as.matrix(mh6@assays$RNA@counts), clusters = mh6@meta.data$seurat_clusters)
+mh6$doublet_score <- doublets$scDblFinder.score
+mh6$doublet <- doublets$scDblFinder.class
+
+#Plot doublets
+DimPlot(mh6, reduction = "umap", group.by = "seurat_clusters")
+DimPlot(mh6, reduction = "umap", group.by = "doublet")
+
+#Remove doublets
+mh6 <- subset(mh6, subset= doublet == "singlet")
+
+# Load
+load("MH7/pipeline_output/s02_cluster_identity.Rdata")
+#Rename
+mh7 <- data
+# Add sample label
+mh7$sample <- "mh7"
+# Add calc/control label
+mh7$cc <- "calcified"
+# Add location label
+mh7$loc <- "kidney"
+#Add cell type label to meta
+mh7$celltype <- Idents(mh7)
+
+#Doublet finding
+doublets <- scDblFinder(sce = as.matrix(mh7@assays$RNA@counts), clusters = mh7@meta.data$seurat_clusters)
+mh7$doublet_score <- doublets$scDblFinder.score
+mh7$doublet <- doublets$scDblFinder.class
+
+#Plot doublets
+DimPlot(mh7, reduction = "umap", group.by = "seurat_clusters")
+DimPlot(mh7, reduction = "umap", group.by = "doublet")
+
+#Remove doublets
+mh7 <- subset(mh7, subset= doublet == "singlet")
+
+#Cleanup unnecassary objects
+rm(clust, data, mt.patt, npcs, opt, pca, rdata, sample, script.dir, all.markers, ids, heat, initial.options, opt2, pca2, doublets)
+
+obj <- c(mh6, mh7)
+
+```
+
+#Markers to integrate
+```{r}
+## List cell type markers
+features_VSMC <- c("Myh11","Acta2","Tagln","Cnn1","Myocd","Vcl","Smtn","Ly6a") %>% toupper()
+features_pericytes <- c("Cspg4","Pdgfrb","Colec11","Kcnj8","Abcc9","Vtn","Notch3") %>% toupper()
+features_fibroblast <- c("Dcn","Lum","Pdgfra","Cd248","Col1a1","Apoe","Ogn","Postn") %>% toupper()
+features_endothelial <- c("Cdh5","Pecam1","Kdr","Fabp4","Cd36") %>% toupper()
+features_cellcycle <- c("Mki67","Ccnb2") %>% toupper()
+features_immunecells <- c("Ptprc","Ms4a1","Cd79a","Lgals3","Ly6c1","Ncr1","Cd3e","S100a9","Cd209a","Fcgr1","Dab2","Hba-a1", "Cd68", "Ighm") %>% toupper()
+
+allfeatures <- c(features_VSMC,
+                 features_pericytes,
+                 features_fibroblast,
+                 features_endothelial,
+                 features_cellcycle,
+                 features_immunecells) %>% unique()
+```
+
+
+#Merge objects
+```{r merge}
+
+# select features that are repeatedly variable across datasets for integration
+features <- SelectIntegrationFeatures(object.list = obj)
+
+# Find anchors
+anchors <- FindIntegrationAnchors(object.list = obj, anchor.features = c(features, allfeatures))
+
+# Integrate data
+data <- IntegrateData(anchorset = anchors, dims= 1:20, features.to.integrate = c(features, allfeatures))
+
+#Checkpoint
+#saveRDS(data, file = "integrateddata.kidney.rds")
+
+#data <- readRDS("integrateddata.kidney.rds")
+
+# Label assay
+DefaultAssay(data) <- "integrated"
+
+# Scale data on variable features (can be changed if requested)
+data <- ScaleData(data, verbose = FALSE, features=rownames(data))
+
+# Run PCA
+data <- RunPCA(data, features = VariableFeatures(object = data), verbose = FALSE)
+
+npcs <- get_npcs(seurat_object = data, create_plot = TRUE)
+
+# Plot elbow plot for selection of principle components
+npcs$plot
+
+# Run UMAP
+data <- RunUMAP(data, reduction = "pca", dims = 1:10, verbose = FALSE)
+
+# Find neighbours
+data <- FindNeighbors(data, reduction = "pca", dims = 1:10)
+data <- FindClusters(data, resolution = 0.2)
+
+
+```
+
+#Visualise plots
+```{r visualisation}
+
+#Create short format of celltype (without allocation score)
+data$celltypes1 <- data@meta.data$celltype %>% lapply( function(x) gsub(".*-","", x)) %>% lapply( function(x) gsub("\\(.*","", x)) %>% unlist()
+
+#Plot old cell types to check integration
+p1 <- DimPlot(data, reduction = "umap", group.by = "celltypes1")
+
+DimPlot(data, reduction = "umap", group.by = "celltypes1")
+
+# Plot cases vs controls
+p2 <- DimPlot(data, reduction = "umap", group.by = "cc")
+
+# Plot clusters
+p3 <- DimPlot(data, reduction = "umap", label = TRUE)
+
+# Create grid of plots
+grid1 <- plot_grid(p1, p3)
+
+grid1
+
+# Create grid of plots
+grid2 <- plot_grid(p2, p3)
+
+grid2
+
+```
+
+#Label cell types
+```{r cell types}
+
+# Find markers for all clusters
+clust.markers <- FindAllMarkers(data, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, verbose = FALSE)
+top10 <- clust.markers %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+
+# Add cluster label
+data$cluster <- Idents(data)
+
+## List cell type markers
+features_VSMC <- c("Myh11","Acta2","Tagln","Cnn1","Myocd","Vcl","Smtn","Ly6a") %>% toupper()
+features_pericytes <- c("Cspg4","Pdgfrb","Colec11","Kcnj8","Abcc9","Vtn","Notch3") %>% toupper()
+features_fibroblast <- c("Dcn","Lum","Pdgfra","Cd248","Col1a1","Apoe","Ogn","Postn") %>% toupper()
+features_endothelial <- c("Cdh5","Pecam1","Kdr","Fabp4","Cd36") %>% toupper()
+features_cellcycle <- c("Mki67","Ccnb2") %>% toupper()
+features_immunecells <- c("Ptprc","Ms4a1","Cd79a","Lgals3","Ly6c1","Ncr1","Cd3e","S100a9","Cd209a","Fcgr1","Dab2","Hba-a1", "Cd68", "Ighm") %>% toupper()
+
+allfeatures <- c(features_VSMC,
+                 features_pericytes,
+                 features_fibroblast,
+                 features_endothelial,
+                 features_cellcycle,
+                 features_immunecells) %>% unique()
+
+#Plot each set of features
+FeaturePlot(data, feature = features_VSMC)
+FeaturePlot(data, feature = features_pericytes)
+FeaturePlot(data, feature = features_fibroblast)
+FeaturePlot(data, feature = features_endothelial)
+FeaturePlot(data, feature = features_cellcycle)
+FeaturePlot(data, feature = features_immunecells)
+
+#Plot vln of features
+VlnPlot(data, feature = features_VSMC)
+VlnPlot(data, feature = features_pericytes)
+VlnPlot(data, feature = features_fibroblast)
+VlnPlot(data, feature = features_endothelial)
+VlnPlot(data, feature = features_cellcycle)
+VlnPlot(data, feature = features_immunecells)
+
+#Heatmap of clusters
+DefaultAssay(data) <- "RNA"
+
+data <- ScaleData(data, features=rownames(data), assay = "RNA")
+
+DoHeatmap(data, features = top10$gene, raster = FALSE, size = 3) + theme(text = element_text(size = 8))
+
+#Heatmap of proported immune cell markers
+data.immune <- subset(data, subset= seurat_clusters %in% c("7", "10", "12"))
+
+data.immune$cluster <- factor(data.immune@meta.data$seurat_clusters, levels=unique(data.immune@meta.data$seurat_clusters))
+
+markers.immune <- FindAllMarkers(data.immune, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, verbose = FALSE)
+
+top.immune <- markers.immune %>% filter(p_val_adj < 0.05) %>% group_by(cluster) %>% top_n(-15, p_val_adj) %>% top_n(15, avg_log2FC)
+
+DoHeatmap(object = data.immune, features = top.immune$gene, group.by = "cluster")
+
+DoMultiBarHeatmap(object = data.immune, features = top.immune$gene, group.by = "cluster", additional.group.by = "cc")
+
+#Label celltypes
+
+#DefaultAssay(data) <- "integrated"
+
+types <- list("0"="VSMC",
+     "1"="VSMC",
+     "2"="Fibroblasts",
+     "3"="Endothelial",
+     "4"="Fibroblasts",
+     "5"="VSMC",
+     "6"="Endothelial",
+     "7"="Immune",
+     "8"="Unknown",
+     "9"="Pericytes",
+     "10"="T-cells",
+     "11"="Endothelial",
+     "12"="Granulocytes")
+
+#Rename identities
+data <- RenameIdents(data, types)
+data$celltype <- Idents(data)
+
+#Checkpoint 2
+#saveRDS(data, file = "integrateddata_kidney_p2.rds")
+
+#data <- readRDS("integrateddata_kidney_p2.rds")
+
+```
+
+#Check proportion of clusters in calcified and controls
+```{r prop}
+
+meta.sum <- data@meta.data %>% 
+  group_by(seurat_clusters) %>% 
+  mutate(count.calcified=sum(cc == "calcified"), count.cont=sum(cc == "control")) %>% 
+  subset(select=c(seurat_clusters, count.calcified, count.cont)) %>% 
+  unique()
+
+
+meta.sum <- meta.sum %>% gather(cc, counts, 2:3)
+
+ggplot(meta.sum, aes(x=seurat_clusters, y=counts, fill=cc)) +
+  geom_bar(stat="identity", position = "dodge")
+
+```
+
+
+
+#Identify differentially expressed genes
+```{r DE}
+
+# Set case control identities
+Idents(data) <- "cc"
+
+# Gather average expression
+avg <- log1p(AverageExpression(data, verbose = FALSE)$RNA) %>% as.data.frame()
+
+expr.plot <- ggplot(avg, aes(control, calcified)) + geom_point()
+
+expr.plot
+
+# Find case control markers
+response <- FindMarkers(data, ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+
+head(response, n = 15)
+
+# Add average expression for cases
+response <- merge(response, avg, by = "row.names", all.x=TRUE, all.y=FALSE)
+
+colnames(response)[7:8] <- c("log1p_avg_calcified", "log1p_avg_controls")
+
+#Select top genes
+response.top <- response[order(response$avg_log2FC, decreasing = FALSE),][1:30,]
+response.bottom <- response[order(response$avg_log2FC, decreasing = TRUE),][1:30,]
+
+response.tb <- rbind(response.top, response.bottom)
+
+#Plot heatmap of top genes
+DoHeatmap(data, features = response.tb$Row.names, assay = 'RNA', raster = FALSE, size = 3) + theme(text = element_text(size = 8))
+
+
+# Plot (change to view specific features of interest)
+#FeaturePlot(data, features = c("Mcpt1l1", "Ptgs2"), split.by = "cc", max.cutoff = 3, cols = c("grey", "red"))
+
+```
+
+#Identify differentially expressed genes per cluster
+```{r DEC, error=TRUE}
+
+# gather response genes per cluster
+response.0 <- subset(data, subset= cluster == 0) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.1 <- subset(data, subset= cluster == 1) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.2 <- subset(data, subset= cluster == 2) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.3 <- subset(data, subset= cluster == 3) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.4 <- subset(data, subset= cluster == 4) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.5 <- subset(data, subset= cluster == 5) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.6 <- subset(data, subset= cluster == 6) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.7 <- subset(data, subset= cluster == 7) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.8 <- subset(data, subset= cluster == 8) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.9 <- subset(data, subset= cluster == 9) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.10 <- subset(data, subset= cluster == 10) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.11 <- subset(data, subset= cluster == 11) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.12 <- subset(data, subset= cluster == 12) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+
+# Gather average expression per cluster
+avg.0 <- log1p(AverageExpression(subset(data, subset= cluster == 0), verbose = FALSE)$RNA)
+avg.1 <- log1p(AverageExpression(subset(data, subset= cluster == 1), verbose = FALSE)$RNA)
+avg.2 <- log1p(AverageExpression(subset(data, subset= cluster == 2), verbose = FALSE)$RNA)
+avg.3 <- log1p(AverageExpression(subset(data, subset= cluster == 3), verbose = FALSE)$RNA)
+avg.4 <- log1p(AverageExpression(subset(data, subset= cluster == 4), verbose = FALSE)$RNA)
+avg.5 <- log1p(AverageExpression(subset(data, subset= cluster == 5), verbose = FALSE)$RNA)
+avg.6 <- log1p(AverageExpression(subset(data, subset= cluster == 6), verbose = FALSE)$RNA)
+avg.7 <- log1p(AverageExpression(subset(data, subset= cluster == 7), verbose = FALSE)$RNA)
+avg.8 <- log1p(AverageExpression(subset(data, subset= cluster == 8), verbose = FALSE)$RNA)
+avg.9 <- log1p(AverageExpression(subset(data, subset= cluster == 9), verbose = FALSE)$RNA)
+avg.10 <- log1p(AverageExpression(subset(data, subset= cluster == 10), verbose = FALSE)$RNA)
+avg.11 <- log1p(AverageExpression(subset(data, subset= cluster == 11), verbose = FALSE)$RNA)
+avg.12 <- log1p(AverageExpression(subset(data, subset= cluster == 12), verbose = FALSE)$RNA)
+
+#Add average expression for calcifieds
+response.0 <- merge(response.0, avg.0, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.1 <- merge(response.1, avg.1, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.2 <- merge(response.2, avg.2, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.3 <- merge(response.3, avg.3, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.4 <- merge(response.4, avg.4, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.5 <- merge(response.5, avg.5, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.6 <- merge(response.6, avg.6, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.7 <- merge(response.7, avg.7, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.8 <- merge(response.8, avg.8, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.9 <- merge(response.9, avg.9, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.10 <- merge(response.10, avg.10, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.11 <- merge(response.11, avg.11, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+response.12 <- merge(response.12, avg.12, by = "row.names", all.x=TRUE, all.y=FALSE) %>% filter(p_val_adj < 0.05)
+
+# Change column names
+colnames(response.0)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.1)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.2)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.3)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.4)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.5)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.6)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.7)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.8)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.9)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.10)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.11)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+colnames(response.12)[7:8] <- c("log1p_avg_calcifieds", "log1p_avg_controls")
+
+```
+
+
+#Save data
+```{r save}
+
+# Clean up
+rm(avg, avg.0, avg.1, avg.2, avg.3, avg.4, avg.5, avg.6, avg.7, avg.8, avg.9, avg.10, avg.11, avg.12, response.bottom, response.top)
+
+# Save data
+#save.image("results/integration.de.RData")
+
+# Write csv
+write.csv(response, "results/kidney/kidney.de.calcifiedcontrol.20210412.csv")
+
+# Write csv per cluster
+write.csv(response.0, "results/kidney/de.cluster0_calcifiedcontrol.20210412.csv")
+write.csv(response.1, "results/kidney/de.cluster1_calcifiedcontrol.20210412.csv")
+write.csv(response.2, "results/kidney/de.cluster2_calcifiedcontrol.20210412.csv")
+write.csv(response.3, "results/kidney/de.cluster3_calcifiedcontrol.20210412.csv")
+write.csv(response.4, "results/kidney/de.cluster4_calcifiedcontrol.20210412.csv")
+write.csv(response.5, "results/kidney/de.cluster5_calcifiedcontrol.20210412.csv")
+write.csv(response.6, "results/kidney/de.cluster6_calcifiedcontrol.20210412.csv")
+write.csv(response.7, "results/kidney/de.cluster7_calcifiedcontrol.20210412.csv")
+write.csv(response.8, "results/kidney/de.cluster8_calcifiedcontrol.20210412.csv")
+write.csv(response.9, "results/kidney/de.cluster9_calcifiedcontrol.20210412.csv")
+write.csv(response.10, "results/kidney/de.cluster10_calcifiedcontrol.20210412.csv")
+write.csv(response.11, "results/kidney/de.cluster11_calcifiedcontrol.20210412.csv")
+write.csv(response.12, "results/kidney/de.cluster12_calcifiedcontrol.20210412.csv")
+
+
+```
+
+#Create heatmap of per celltype 
+```{r}
+
+#Select top significant genes on log fold change per cluster
+
+top.0 <- response.0[order(response.0$avg_log2FC),][1:10,]
+top.1 <- response.1[order(response.1$avg_log2FC),][1:10,]
+top.2 <- response.2[order(response.2$avg_log2FC),][1:10,]
+top.3 <- response.3[order(response.3$avg_log2FC),][1:10,]
+top.4 <- response.4[order(response.4$avg_log2FC),][1:10,]
+top.5 <- response.5[order(response.5$avg_log2FC),][1:10,]
+top.6 <- response.6[order(response.6$avg_log2FC),][1:10,]
+top.7 <- response.7[order(response.7$avg_log2FC),][1:10,]
+top.8 <- response.8[order(response.8$avg_log2FC),][1:10,]
+top.9 <- response.9[order(response.9$avg_log2FC),][1:10,]
+top.10 <- response.10[order(response.10$avg_log2FC),][1:10,]
+top.11 <- response.11[order(response.11$avg_log2FC),][1:10,]
+top.12 <- response.12[order(response.12$avg_log2FC),][1:10,]
+
+#Bind into one table
+all.top <- rbind(top.0, top.1, top.2, top.3, top.4, top.5, top.6, top.7, top.8, top.9, top.10, top.11, top.12)
+
+all.top <- all.top[order(all.top$avg_log2FC, decreasing = TRUE),]
+
+#Create annotation table
+Idents(data) <- "celltype"
+
+data$cluster.fct <- factor(as.character(data@meta.data$seurat_clusters), levels=levels(data@meta.data$seurat_clusters))
+
+DoMultiBarHeatmap(object = data, features = all.top$Row.names, group.by = "cc", additional.group.by = "cluster.fct")
+
+
+```
+
+#Make per cluster heatmap
+```{r}
+#Create cluster-site identity
+data$csite <- paste(data@meta.data$cc, data@meta.data$loc, sep="-")
+
+#Set cc as identity
+Idents(data) <- "cc"
+
+#Cluster 0
+c0 <- subset(data, subset= cluster == 0)
+
+top.0 <- response.0[order(response.0$avg_log2FC),][1:30,]
+bot.0 <- response.0[order(response.0$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c0, features = unique(c(top.0$Row.names, bot.0$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+#Cluster 1
+c1 <- subset(data, subset= cluster == 1)
+
+top.1 <- response.1[order(response.1$avg_log2FC),][1:30,]
+bot.1 <- response.1[order(response.1$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c1, features = unique(c(top.1$Row.names, bot.1$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+#Cluster 2
+c2 <- subset(data, subset= cluster == 2)
+
+top.2 <- response.2[order(response.2$avg_log2FC),][1:30,]
+bot.2 <- response.2[order(response.2$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c2, features = unique(c(top.2$Row.names, bot.2$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+#Cluster 3
+c3 <- subset(data, subset= cluster == 3)
+
+top.3 <- response.3[order(response.3$avg_log2FC),][1:30,]
+bot.3 <- response.3[order(response.3$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c3, features = unique(c(top.3$Row.names, bot.3$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+
+#Cluster 4
+c4 <- subset(data, subset= cluster == 4)
+
+top.4 <- response.4[order(response.4$avg_log2FC),][1:30,]
+bot.4 <- response.4[order(response.4$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c4, features = unique(c(top.4$Row.names, bot.4$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+
+#Cluster 5
+c5 <- subset(data, subset= cluster == 5)
+
+top.5 <- response.5[order(response.5$avg_log2FC),][1:30,]
+bot.5 <- response.5[order(response.5$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c5, features = unique(c(top.5$Row.names, bot.5$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+
+#Cluster 6
+c6 <- subset(data, subset= cluster == 6)
+
+top.6 <- response.6[order(response.6$avg_log2FC),][1:30,]
+bot.6 <- response.6[order(response.6$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c6, features = unique(c(top.6$Row.names, bot.6$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+
+#Cluster 7
+c7 <- subset(data, subset= cluster == 7)
+
+top.7 <- response.7[order(response.7$avg_log2FC),][1:30,]
+bot.7 <- response.7[order(response.7$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c7, features = unique(c(top.7$Row.names, bot.7$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+
+#Cluster 8
+c8 <- subset(data, subset= cluster == 8)
+
+top.8 <- response.8[order(response.8$avg_log2FC),][1:30,]
+bot.8 <- response.8[order(response.8$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c8, features = unique(c(top.8$Row.names, bot.8$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+
+#Cluster 9
+c9 <- subset(data, subset= cluster == 9)
+
+top.9 <- response.9[order(response.9$avg_log2FC),][1:30,]
+bot.9 <- response.9[order(response.9$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c9, features = unique(c(top.9$Row.names, bot.9$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+
+#Cluster 10
+c10 <- subset(data, subset= cluster == 10)
+
+top.10 <- response.10[order(response.10$avg_log2FC),][1:30,]
+bot.10 <- response.10[order(response.10$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c10, features = unique(c(top.10$Row.names, bot.10$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+#Cluster 11
+c11 <- subset(data, subset= cluster == 11)
+
+top.11 <- response.11[order(response.11$avg_log2FC),][1:30,]
+bot.11 <- response.11[order(response.11$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c11, features = unique(c(top.11$Row.names, bot.11$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+#Cluster 12
+c12 <- subset(data, subset= cluster == 12)
+
+top.12 <- response.12[order(response.12$avg_log2FC),][1:30,]
+bot.12 <- response.12[order(response.12$avg_log2FC, decreasing = TRUE),][1:30,]
+
+DoMultiBarHeatmap(object = c12, features = unique(c(top.12$Row.names, bot.12$Row.names)), group.by = "cc", additional.group.by = "celltype")
+
+
+```
+
+

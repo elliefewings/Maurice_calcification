@@ -1,0 +1,289 @@
+---
+author: "Eleanor Fewings"
+output: html_document
+---
+
+# start_section  
+
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(magrittr)
+library(Seurat)
+library(cowplot)
+library(knitr)
+library(DoMultiBarHeatmap)
+library(tibble)
+library(progeny)
+library(pheatmap)
+library(viridis)
+library(tidyverse)
+
+#Set working dir
+setwd("C:/Users/ellie/Onedrive/Saez/Maurice_calc")
+
+# Source functions
+source("C:/Users/ellie/Onedrive/Saez/Maurice_calc/scripts/source.R")
+
+```
+
+MH6 - human kidney artery control 
+MH7 - human kidney artery calcified 
+MH11- human artery femoralis calcified
+MH12- human artery femoralis control
+MH13- human aorta calcified
+MH14- human aorta control
+MH15- human artery epigastrica calcified
+MH16- human artery epigastrica control
+
+#Read objects in
+```{r read}
+
+data <- readRDS("integrateddata_epigastra_p2.rds")
+
+```
+
+#Generate progeny scores
+```{r}
+
+#Run progeny on cases and controls
+alldata <- runprog(data)
+
+#Run progeny
+data <- progeny(data, scale=FALSE, organism="Mouse", top=500, perm=1, return_assay = TRUE)
+data <- ScaleData(data, assay = "progeny")
+
+#Metadata
+CellsClusters <- data@meta.data %>% 
+  rownames_to_column('Cell') %>% 
+  subset(select=c("cc", "celltype", "Cell", "cluster"))
+
+colnames(CellsClusters) <- c("cc", "celltype1", "Cell", "cluster")
+
+progeny_scores_df = as.data.frame(t(GetAssayData(data, slot = 'scale.data', assay = 'progeny'))) %>%
+  rownames_to_column('Cell') %>%
+  gather(Pathway, Activity, -Cell)
+progeny_scores_df = inner_join(progeny_scores_df, CellsClusters)
+progeny_scores_df$condition = progeny_scores_df$cc
+progeny_scores_df$cell.type = paste(progeny_scores_df$celltype1, progeny_scores_df$cluster, sep="_")
+
+
+# VSMC_0 cells
+conditions = c('calcified', 'control')
+celltype = "VSMC_0"
+pathways = progeny_scores_df$Pathway %>% unique()
+
+test.stats = compute_stats(df = progeny_scores_df, celltype = celltype, 
+                           pathways = pathways, conditions = conditions, plot = TRUE)
+
+#Plot output
+test.stats$p
+
+# VSMC_1 cells
+conditions = c('calcified', 'control')
+celltype = "VSMC_1"
+pathways = progeny_scores_df$Pathway %>% unique()
+
+test.stats = compute_stats(df = progeny_scores_df, celltype = celltype, 
+                           pathways = pathways, conditions = conditions, plot = TRUE)
+
+#Plot output
+test.stats$p
+
+
+#Replot all VSMC with only specific pathways
+conditions = c('calcified', 'control')
+celltype = c("VSMC_0", "VSMC_1")
+pathways = c("Androgen", "EGFR", "JAK-STAT", "NFkB", "p53", "TNFa")
+
+test.stats = compute_stats(df = progeny_scores_df, celltype = celltype, 
+                           pathways = pathways, conditions = conditions, plot = TRUE)
+
+#Plot output
+test.stats$p
+
+
+
+```
+
+#Recreate response markers
+```{r}
+# Set case control identities
+Idents(data) <- "cc"
+
+# gather response genes per cluster
+response.0 <- subset(data, subset= cluster == 0) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.1 <- subset(data, subset= cluster == 1) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.2 <- subset(data, subset= cluster == 2) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.3 <- subset(data, subset= cluster == 3) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.4 <- subset(data, subset= cluster == 4) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.5 <- subset(data, subset= cluster == 5) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.6 <- subset(data, subset= cluster == 6) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.7 <- subset(data, subset= cluster == 7) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.8 <- subset(data, subset= cluster == 8) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.9 <- subset(data, subset= cluster == 9) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+response.10 <- subset(data, subset= cluster == 10) %>% FindMarkers(ident.1 = "calcified", ident.2 = "control", verbose = FALSE)
+
+#Add cluster label
+response.0$cluster <- "0"
+response.1$cluster <- "1"
+response.2$cluster <- "2"
+response.3$cluster <- "3"
+response.4$cluster <- "4"
+response.5$cluster <- "5"
+response.6$cluster <- "6"
+response.7$cluster <- "7"
+response.8$cluster <- "8"
+response.9$cluster <- "9"
+response.10$cluster <- "10"
+
+#Add gene column
+response.0$gene <- row.names(response.0)
+response.1$gene <- row.names(response.1)
+response.2$gene <- row.names(response.2)
+response.3$gene <- row.names(response.3)
+response.4$gene <- row.names(response.4)
+response.5$gene <- row.names(response.5)
+response.6$gene <- row.names(response.6)
+response.7$gene <- row.names(response.7)
+response.8$gene <- row.names(response.8)
+response.9$gene <- row.names(response.9)
+response.10$gene <- row.names(response.10)
+
+
+#Cell types
+label <- list("0"="VSMC",
+     "1"="VSMC",
+     "2"="Fibroblasts",
+     "3"="Endothelial",
+     "4"="Pericytes",
+     "5"="Fibroblasts",
+     "6"="Unknown",
+     "7"="Endothelial",
+     "8"="Pericytes",
+     "9"="Fibroblasts",
+     "10"="Immune")
+
+```
+
+#GSEA
+```{r}
+
+#Select genes to run analysis
+bg.genes <- row.names(data)
+
+
+#DE clusters
+de.files <- list(response.0, response.1, response.2, response.3, response.4, response.5, response.6, response.7, response.8, response.9, response.10)
+
+for (file in de.files){
+  markers <- file[order(file$avg_log2FC, decreasing = TRUE),]
+  rownames(markers) <- markers$gene
+  
+  # Get cell type
+  clust <- unique(markers$cluster)
+  cell.type <- label[names(label) == clust] %>% unlist() %>% str_replace("/", "_") %>% str_replace(" ", "_")
+  cell.type <- paste(cell.type, paste0("cluster", clust), sep="_")
+  outdir <- "GSEA/epigastra"
+  dir.create(outdir)
+  
+  # GSEA
+  stats <- markers$avg_log2FC
+  names(stats) <- rownames(markers)
+  stats <- stats[!is.na(stats)]
+  file.prefix <- paste('healthy_vs_calcified_', cell.type, sep="") 
+  
+  # GO
+  run_gsea(bg.genes = bg.genes, stats = stats, 
+           category = 'C5', subcategory = 'BP',
+           out.dir = outdir, plot.title = 'GO',
+           file.prefix = file.prefix)
+  
+}
+
+
+
+```
+
+#Plotting specific markers
+```{r}
+#Create metadata
+metadata <- data@meta.data
+
+#Find gene names
+BMPs <- bg.genes[grepl("BMP", bg.genes)]
+MMPs <- bg.genes[grepl("MMP", bg.genes)]
+
+#Create new marker sets
+osteo <- c("RUNX2", "BMP2", "MSX2", "SPP1", "NOTCH1", "SOX9", "SP7", "TNFSF11", BMPs)
+ecm <- c(MMPs, "COL1A1")
+phos <- c("POU1F1", "SLC20A2", "ALPL", "ENPP1")
+inflam <- c("IL6", "IL1B", "TNF")
+others <- c("AGER", "S100A8", "S100A9", "S100A12")
+
+#All
+all.markers <- list(osteo=osteo, ecm=ecm, phos=phos, others=others)
+
+
+#Clusters - VSMC, Fibroblasts and Pericytes
+#clusters <- c(0,1,2,4,5,8,9)
+clusters <- c(4,5,8,9)
+
+for (clust in clusters){
+  # Get cell type
+  cell.type <- label[names(label) == clust] %>% unlist() %>% str_replace("/", "_") %>% str_replace(" ", "_")
+  cell.type <- paste(cell.type, paste0("cluster", clust), sep="_")
+  outdir <- "curated_geneset_analysis/epigastra"
+  dir.create(outdir)
+  
+  # File names
+  prefix.osteo <- paste(outdir, '/','healthy_vs_calcified_osteogenic_', cell.type, '.pdf', sep="") 
+  prefix.ecm <- paste(outdir, '/', 'healthy_vs_calcified_ECM_', cell.type, '.pdf', sep="")
+  prefix.phosphate <- paste(outdir, '/', 'healthy_vs_calcified_phostphate_', cell.type, '.pdf', sep="") 
+  prefix.inflam <- paste(outdir, '/', 'healthy_vs_calcified_inflammation_', cell.type, '.pdf', sep="") 
+  prefix.others <- paste(outdir, '/', 'healthy_vs_calcified_others_', cell.type, '.pdf', sep="")
+  prefix.all <- paste(outdir, '/', 'healthy_vs_calcified_all_', cell.type, '.pdf', sep="")
+  
+  # Create osteo plot
+  pdf(file = prefix.osteo, width = 10, height = 9)
+  print(expr.plot(clust, osteo, "cc"))
+  dev.off()
+  
+  # Create ecm plot
+  pdf(file = prefix.ecm, width = 10, height = 9)
+  print(expr.plot(clust, ecm, "cc"))
+  dev.off()
+  
+  # Create phospho plot
+  pdf(file = prefix.phosphate, width = 10, height = 9)
+  print(expr.plot(clust, phos, "cc"))
+  dev.off()
+  
+  # Create inflam plot
+  pdf(file = prefix.inflam, width = 10, height = 9)
+  print(expr.plot(clust, inflam, "cc"))
+  dev.off()
+  
+  # Create others plot
+  pdf(file = prefix.others, width = 10, height = 9)
+  print(expr.plot(clust, others, "cc"))
+  dev.off()
+  
+  # Create all plot
+  pdf(file = prefix.all, width = 10, height = 9)
+  print(gsea.expr.plot(clust, all.markers, "cc"))
+  dev.off()
+  
+}
+
+```
+
